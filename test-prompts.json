@@ -1,0 +1,17 @@
+[
+  {
+    "id": 1,
+    "prompt": "派小弟去帮我查一下系统里Python的版本",
+    "expected": "async-delegate触发→后台子agent执行python3 --version→返回版本号。主对话不阻塞，立即回复。"
+  },
+  {
+    "id": 2,
+    "prompt": "让小弟去ERP项目里创建一个测试文件 /tmp/async_test_ping.txt 内容为pong",
+    "expected": "需显式传workdir（或在prompt里指定路径）。子agent写文件后验证存在。"
+  },
+  {
+    "id": 3,
+    "prompt": "让小弟并行做两件事：1）在/tmp下创建a.txt内容为AAA 2）在/tmp下创建b.txt内容为BBB",
+    "expected": "触发多任务模式→两个子agent并行→都完成后汇总结果。"
+  }
+]

@@ -134,7 +134,7 @@ A → B → C（串行排队）
 
 ---
 
-## ⚡ TL;DR（单任务模板 — 默认带 caveman + result-file）
+### TL;DR（单任务模板 — 默认带 caveman + result-file + output sanitization）
 
 **快速复制这段，填3个东西。所有子 agent 默认 `--caveman --result-file`：**
 
@@ -306,6 +306,38 @@ python3 ~/.hermes/skills/async-delegate/scripts/async_delegate.py \
 | `deepseek-v4-flash` | 复杂长程任务（改代码、写UI、分析推理） | 上下文1M，大活才切 |
 
 **原则：** 日常用 MiniMax M2.7（免费套餐），复杂长程任务（改代码、写UI、全量导入等）手动切 `deepseek-v4-flash`。
+
+---
+
+## ✅ 跨模型输出保障（v10，自动生效）
+
+子 agent 的 `answer` 输出会自动经过**双重清洗**，确保 MiniMax 的输出不会炸 DeepSeek，反之亦然：
+
+### 系统消息层（源头约束）
+
+所有子 agent 自动附带「输出格式规范」指令：
+
+```
+【输出格式规范】你的最终输出必须符合以下标准：
+1. 纯 UTF-8 编码，无 BOM (U+FEFF)，无控制字符（仅保留换行和制表符）
+2. 无零宽字符 (U+200B U+200C U+200D U+FEFF 等)，无模型专属标记符号
+3. 所有字符串内容标准 JSON 转义，确保可以被 json.load() 直接解析
+4. 不输出思考过程、推理痕迹、或任何标记语言包装
+5. 中文内容保持普通汉字，不使用异体字或特殊 Unicode 组合
+```
+
+### 代码层（兜底清洗）
+
+`_sanitize_output()` 在写入 result 文件前暴力过滤：
+
+| 过滤项 | 原因 |
+|--------|------|
+| BOM (U+FEFF) | 某些 provider 在流式输出开头塞 BOM |
+| 零宽字符 (U+200B/C/D 等) | MiniMax 输出中常见，DeepSeek 解析崩溃 |
+| 控制字符 (0x00-0x08/0x0b/0x0c/0x0e-0x1f/0x7f) | 炸 JSON 解析器 |
+| 非法代理对 (U+D800-U+DFFF) | 不合规 UTF-16 代理炸 Python json |
+
+**不需要在 prompt 里手动处理**——全自动，拿到的 result 文件里的 `answer` 已经是干净的。
 
 ---
 
@@ -698,9 +730,19 @@ flowchart LR
 
 ## ✅ 修复日志
 
-## v9 — 原始人模式 --caveman + 默认参数模板（2026-05-05）
+### v10 — 跨模型兼容（2026-05-06）
 
-**老大要求**：子agent也该用原始人模式，说重点别啰嗦。2026-05-05 生产验证：派两个小弟修 ERP bug（报价单创建崩溃 + 订单新增行不换算），其中一个用 `--caveman`+`--result-file` 96s 完工，结果完整可读。
+**问题**：①子 agent 默认模型硬编码为 `minimax-m2.7`，不跟随 Hermes 主配置，其他用户使用时无法自动适配。②MiniMax 输出中的零宽字符/控制字符传给 DeepSeek V4 时编码崩溃。
+
+**改动：**
+1. **默认模型动态解析** — 新增 `_resolve_default_model()`，读取 `~/.hermes/config.yaml` 的 `model.default` 作为默认模型。所有硬编码 `"minimax-m2.7"` 替换为动态解析，不再手动指定 `--model`。无配置时优雅回退至 `minimax-m2.7`
+2. **输出格式清洗** — 新增 `_sanitize_output()`，自动去除 BOM、零宽字符、控制字符、非法代理对
+3. **系统消息指令** — 新增「输出格式规范」约束子 agent 输出标准 UTF-8
+4. **换行符修复** — caveman directive 的换行符从字面量改为真正换行符
+
+**验证：** smoketest ✅ | 默认模型解析 `deepseek-v4-flash` ✅ | 输出清洗 ✅ | 语法检查 ✅
+
+### v9 — 原始人模式 --caveman + 默认参数模板（2026-05-05）2026-05-05 生产验证：派两个小弟修 ERP bug（报价单创建崩溃 + 订单新增行不换算），其中一个用 `--caveman`+`--result-file` 96s 完工，结果完整可读。
 
 **改动：**
 1. 新增 `--caveman` 参数 → 子agent系统消息中加入原始人模式指令

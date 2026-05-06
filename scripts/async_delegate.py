@@ -61,6 +61,38 @@ def _log(msg: str):
     print(f"[async_delegate] {msg}", file=sys.stderr, flush=True)
 
 
+def _sanitize_output(text: str) -> str:
+    """Strip problematic characters for cross-model compatibility.
+    
+    Removes: control chars (except \\n\\t), zero-width chars, BOM, surrogates.
+    This prevents MiniMax-specific output from crashing DeepSeek V4 and vice versa.
+    """
+    import re
+    # Remove BOM
+    text = text.replace('\ufeff', '')
+    # Remove zero-width and invisible chars
+    text = re.sub(r'[\u200b\u200c\u200d\u2060\u2061\u2062\u2063\u2064\ufeff]', '', text)
+    # Remove control chars except \\n (0x0a), \\r (0x0d), \\t (0x09)
+    text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', text)
+    # Remove lone surrogates (invalid in UTF-8)
+    text = re.sub(r'[\ud800-\udfff]', '', text)
+    return text.strip()
+
+
+def _resolve_default_model() -> str:
+    """Read the main model from Hermes config as default for sub-agents.
+
+    Falls back to minimax-m2.7 if config is unavailable.
+    """
+    try:
+        from hermes_cli.config import load_config
+        cfg = load_config()
+        model = cfg.get("model", {}).get("default", "minimax-m2.7")
+        return model or "minimax-m2.7"
+    except Exception:
+        return "minimax-m2.7"
+
+
 def _load_env() -> dict:
     """Read ~/.hermes/.env directly without depending on hermes_cli."""
     env_path = Path.home() / ".hermes" / ".env"
@@ -79,7 +111,7 @@ def _spawn_worker(task: dict, workspace: str, index: int,
     """Spawn a single sub-agent as a subprocess and return its result."""
     task_id = task.get("id", f"task_{index}")
     prompt = task.get("prompt", "")
-    model = task.get("model", "minimax-m2.7")
+    model = task.get("model") or _resolve_default_model()
     toolsets = task.get("toolsets", "")
     sysmsg = task.get("sysmsg", "")
 
@@ -191,7 +223,7 @@ def run_single(args):
     from hermes_cli.runtime_provider import resolve_runtime_provider
 
     cfg = load_config()
-    model_name = args.model
+    model_name = args.model or _resolve_default_model()
     provider_name = None
     base_url = None
 
@@ -246,7 +278,7 @@ def run_single(args):
             "1. 将子任务的 prompt 写入临时文件（write_file）\n"
             "2. 调用下方命令派出子 agent：\n"
             "   python3 ~/.hermes/skills/async-delegate/scripts/async_delegate.py "
-            "--prompt-file <文件路径> --model minimax-m2.7 "
+            f"--prompt-file <文件路径> --model {_resolve_default_model()} "
             "--subprocess-timeout 600 --max-iterations 80\n"
             "3. 收集子 agent 的 stdout 输出并整合到你自己的最终输出中\n"
             "注意：子 agent 没有对话记忆，prompt 要自包含。"
@@ -263,6 +295,18 @@ def run_single(args):
             "技术术语保持准确。代码块不变。错误原文引用。\n"
         )
         system_message += caveman_directive
+
+    # ── Standard output format directive (cross-model compatibility) ──
+    standard_format_directive = (
+        "\n\n【输出格式规范】你的最终输出必须符合以下标准：\n"
+        "1. 纯 UTF-8 编码，无 BOM (U+FEFF)，无控制字符（仅保留换行和制表符）\n"
+        "2. 无零宽字符 (U+200B U+200C U+200D U+FEFF 等)，无模型专属标记符号\n"
+        "3. 所有字符串内容标准 JSON 转义，确保可以被 json.load() 直接解析\n"
+        "4. 不输出思考过程、推理痕迹、或任何标记语言包装\n"
+        "5. 中文内容保持普通汉字，不使用异体字或特殊 Unicode 组合\n"
+        "违反以上规范会导致下游系统崩溃，务必遵守。\n"
+    )
+    system_message += standard_format_directive
 
     user_message = f"{workspace_tag}{args.prompt}"
 
@@ -290,7 +334,9 @@ def run_single(args):
     )
 
     duration = round(time.monotonic() - t0, 1)
-    answer = result.get("final_response") or "(no answer produced)"
+    raw_answer = result.get("final_response") or "(no answer produced)"
+    # ── Sanitize output for cross-model compatibility ──
+    answer = _sanitize_output(raw_answer)
     completed = result.get("completed", True)
 
     _log(f"Completed in {duration}s")
@@ -299,7 +345,7 @@ def run_single(args):
         "status": "done" if completed else "partial",
         "answer": answer,
         "duration_s": duration,
-        "model": args.model,
+        "model": args.model or _resolve_default_model(),
     }
     print(json.dumps(output))
 
@@ -367,7 +413,7 @@ def run_debate(debate_file: str, workspace: str,
         task = {
             "id": f"debate_{role}",
             "prompt": full_prompt,
-            "model": round_def.get("model", "minimax-m2.7"),
+            "model": round_def.get("model") or _resolve_default_model(),
             "toolsets": round_def.get("toolsets", "terminal,file"),
             "sysmsg": f"你是「{identity}」。{round_def.get('sysmsg', '')}",
         }
@@ -416,7 +462,7 @@ def run_multi(tasks_file: str, workspace: str,
     _log(f"Multi-task mode: {len(tasks)} tasks to dispatch")
     for i, task in enumerate(tasks):
         task_id = task.get("id", f"task_{i}")
-        model = task.get("model", "minimax-m2.7")
+        model = task.get("model") or _resolve_default_model()
         toolsets = task.get("toolsets", "")
         _log(f"  [{i}] {task_id}: model={model} toolsets={toolsets}")
 
@@ -469,8 +515,8 @@ def main():
                         help="Read prompt from file")
     parser.add_argument("--tasks-file", default=None,
                         help="JSON file with array of task definitions (multi-task mode)")
-    parser.add_argument("--model", default="minimax-m2.7",
-                        help="Model for single-task mode")
+    parser.add_argument("--model", default=None,
+                        help="Model for sub-agent (default: reads from Hermes config)")
     parser.add_argument("--workspace", default=None,
                         help="Working directory")
     parser.add_argument("--toolsets", default=None,

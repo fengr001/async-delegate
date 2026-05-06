@@ -20,9 +20,10 @@ Hermes Agent 内置的 `delegate_task` 会阻塞主对话——用户问个问�
 |------|------|
 | ⚡ **不阻塞** | dispatch 后立刻回复用户，对话继续 |
 | 🔄 **并行派发** | 一次派多个小弟同时干不同的活 |
-| 📁 **结果文件输出** | 小弟的产出写入文件，供后续验证和查看 |
-| 🪆 **嵌套委派** | 小弟还可以派自己的小弟 |
-| 🦴 **原始人模式** | 短 prompt、省 token、快速迭代 |
+| 🧹 **跨模型兼容** | 自动读取 Hermes 主模型配置，输出自动清洗，MiniMax↔DeepSeek 互传不崩 |
+| 📁 **结果文件输出** | `--result-file` 结构化结果写入 JSON 文件 |
+| 🪆 **嵌套委派** | `--nested` 小弟还可以派自己的小弟 |
+| 🦴 **原始人模式** | `--caveman` 短 prompt、省 token、快速迭代 |
 
 ## 工作流
 
@@ -60,7 +61,7 @@ Hermes Agent 内置的 `delegate_task` 会阻塞主对话——用户问个问�
 async-delegate/
 ├── SKILL.md               # 技能主文档（触发词、规则、调用模板）
 ├── scripts/
-│   └── async_delegate.py  # Python 调度脚本
+│   └── async_delegate.py  # Python 调度脚本（v10）
 ├── references/
 │   ├── delegation-architecture-debate-20260505.md
 │   ├── erp-parallel-dispatch-20260505.md
@@ -72,9 +73,10 @@ async-delegate/
 ## 技术细节
 
 - **触发方式**：`terminal(background=True, notify_on_complete=True)`
-- **模型**：子 agent 默认使用 `minimax-m2.7`（免费套餐）
+- **默认模型**：自动跟随 Hermes 主配置（当前为 `deepseek-v4-flash`），无需手动指定 `--model`
 - **超时控制**：短任务 600s / 80 次迭代，长任务可调
 - **并行上限**：不同文件/任务可同时派发
+- **输出清洗**：自动去除控制字符、零宽字符、BOM，确保跨模型兼容
 
 ---
 

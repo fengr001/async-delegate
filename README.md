@@ -23,7 +23,7 @@ Hermes Agent 内置的 `delegate_task` 会阻塞主对话——用户问个问�
 | 🧹 **跨模型兼容** | 自动读取 Hermes 主模型配置，输出自动清洗，MiniMax↔DeepSeek 互传不崩 |
 | 📁 **结果文件输出** | `--result-file` 结构化结果写入 JSON 文件 |
 | 🪆 **嵌套委派** | `--nested` 小弟还可以派自己的小弟 |
-| 🦴 **原始人模式** | `--caveman` 短 prompt、省 token、快速迭代 |
+| 🦴 **原始人模式** | `--caveman` 短 prompt、省 token、快速迭代（依赖 Hermes `matt-caveman` 技能） |
 
 ## 工作流
 
